@@ -1,0 +1,91 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function userDocumentIsSafe() {
+      return request.resource.data.keys().hasOnly([
+        'uid', 'displayName', 'email', 'phone', 'accountType',
+        'mobilityRole', 'companyName', 'createdAt', 'updatedAt'
+      ])
+        && request.resource.data.keys().hasAll([
+          'uid', 'displayName', 'email', 'accountType',
+          'mobilityRole', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() >= 2
+        && request.resource.data.displayName.size() <= 80
+        && request.resource.data.accountType in ['employee', 'company_admin']
+        && request.resource.data.mobilityRole in ['passenger', 'driver', 'both']
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /users/{uid} {
+      allow create: if isSelf(uid) && userDocumentIsSafe();
+      allow read: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.accountType == resource.data.accountType
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'phone', 'mobilityRole', 'companyName', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /rides/{rideId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'driverId', 'driverName', 'origin', 'destination', 'departureAt',
+          'seats', 'price', 'currency', 'status', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.driverId == request.auth.uid
+        && request.resource.data.driverName is string
+        && request.resource.data.origin is string
+        && request.resource.data.origin.size() >= 2
+        && request.resource.data.origin.size() <= 120
+        && request.resource.data.destination is string
+        && request.resource.data.destination.size() >= 2
+        && request.resource.data.destination.size() <= 120
+        && request.resource.data.departureAt is timestamp
+        && request.resource.data.departureAt > request.time
+        && request.resource.data.status == 'published'
+        && request.resource.data.seats is int
+        && request.resource.data.seats >= 1
+        && request.resource.data.seats <= 8
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0
+        && request.resource.data.price <= 10000
+        && request.resource.data.currency == 'MAD'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn()
+        && resource.data.driverId == request.auth.uid
+        && request.resource.data.driverId == resource.data.driverId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'origin', 'destination', 'departureAt', 'seats', 'price',
+          'status', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /companies/{companyId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
