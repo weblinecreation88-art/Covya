@@ -123,11 +123,11 @@ export default function HomePage() {
                     <div className="today-heading"><span>Votre trajet du jour</span><strong>07:45</strong></div>
                     <div className="route-row">
                       <span className="route-points"><i /><b /><i /></span>
-                      <div><strong>Oulfa, Casablanca</strong><small>18 min · prise en charge</small><strong>Technopark</strong></div>
+                      <div><strong>Épinal</strong><small>20 min · prise en charge</small><strong>Thiriet</strong></div>
                     </div>
                     <div className="driver-row">
-                      <span className="driver-avatar">AE</span>
-                      <div><strong>Ahmed El.</strong><small><Star size={11} fill="currentColor" /> 4,9 · 126 trajets</small></div>
+                      <span className="driver-avatar">RE</span>
+                      <div><strong>Redouane El.</strong><small><Star size={11} fill="currentColor" /> 4,9 · 126 trajets</small></div>
                       <button>Voir le trajet</button>
                     </div>
                   </div>
