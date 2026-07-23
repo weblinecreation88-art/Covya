@@ -10,7 +10,18 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    function userDocumentIsSafe() {
+    function bookingRideIsValid() {
+      let ride = get(
+        /databases/$(database)/documents/rides/$(request.resource.data.rideId)
+      );
+      return ride.data.status == 'published'
+        && ride.data.driverId == request.resource.data.driverId
+        && ride.data.driverId != request.auth.uid
+        && ride.data.departureAt > request.time
+        && ride.data.seats >= request.resource.data.seats;
+    }
+
+    function legacyUserDocumentIsSafe() {
       return request.resource.data.keys().hasOnly([
         'uid', 'displayName', 'email', 'phone', 'accountType',
         'mobilityRole', 'companyName', 'createdAt', 'updatedAt'
@@ -30,15 +41,71 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
     }
 
-    match /users/{uid} {
-      allow create: if isSelf(uid) && userDocumentIsSafe();
-      allow read: if isSelf(uid);
-      allow update: if isSelf(uid)
+    function employeeUserDocumentIsSafe() {
+      return request.resource.data.keys().hasOnly([
+        'uid', 'fullName', 'email', 'phone', 'role', 'onboardingStatus',
+        'homeAddress', 'jobTitle', 'companyId', 'companyName', 'workSite',
+        'createdAt', 'updatedAt'
+      ])
+        && request.resource.data.keys().hasAll([
+          'uid', 'fullName', 'email', 'phone', 'role', 'onboardingStatus',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.fullName is string
+        && request.resource.data.fullName.size() >= 2
+        && request.resource.data.fullName.size() <= 80
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() <= 30
+        && request.resource.data.role == 'employee'
+        && request.resource.data.onboardingStatus in [
+          'profile', 'company', 'commute', 'complete'
+        ]
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function legacyUserUpdateIsSafe() {
+      return resource.data.keys().hasAll(['accountType'])
         && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
         && request.resource.data.accountType == resource.data.accountType
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'displayName', 'phone', 'mobilityRole', 'companyName', 'updatedAt'
         ]);
+    }
+
+    function employeeUserUpdateIsSafe() {
+      return resource.data.keys().hasAll(['role'])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'fullName', 'email', 'phone', 'role', 'onboardingStatus',
+          'homeAddress', 'jobTitle', 'companyId', 'companyName', 'workSite',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.role == 'employee'
+        && request.resource.data.onboardingStatus in [
+          'profile', 'company', 'commute', 'complete'
+        ]
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'fullName', 'phone', 'homeAddress', 'jobTitle', 'companyId',
+          'companyName', 'workSite', 'onboardingStatus', 'updatedAt'
+        ]);
+    }
+
+    match /users/{uid} {
+      allow create: if isSelf(uid)
+        && (legacyUserDocumentIsSafe() || employeeUserDocumentIsSafe());
+      allow read: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && (legacyUserUpdateIsSafe() || employeeUserUpdateIsSafe());
       allow delete: if false;
     }
 
@@ -80,8 +147,132 @@ service cloud.firestore {
     }
 
     match /companies/{companyId} {
-      allow read: if false;
-      allow write: if false;
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'name', 'normalizedName', 'workSite', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'normalizedName', 'workSite', 'createdBy', 'createdAt'
+        ])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.normalizedName is string
+        && request.resource.data.workSite is string
+        && request.resource.data.workSite.size() >= 2
+        && request.resource.data.workSite.size() <= 180
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+
+      match /members/{uid} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid)
+          && request.resource.data.keys().hasOnly([
+            'userId', 'role', 'status', 'joinedAt'
+          ])
+          && request.resource.data.userId == uid
+          && request.resource.data.role == 'employee'
+          && request.resource.data.status == 'active'
+          && request.resource.data.joinedAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /ride_templates/{templateId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'ownerId', 'departure', 'destination', 'departureTime',
+          'travelDays', 'rideRole', 'active', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'ownerId', 'departure', 'destination', 'departureTime',
+          'travelDays', 'rideRole', 'active', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.departure is string
+        && request.resource.data.departure.size() >= 2
+        && request.resource.data.departure.size() <= 180
+        && request.resource.data.destination is string
+        && request.resource.data.destination.size() >= 2
+        && request.resource.data.destination.size() <= 180
+        && request.resource.data.departureTime is string
+        && request.resource.data.travelDays is list
+        && request.resource.data.travelDays.size() >= 1
+        && request.resource.data.travelDays.size() <= 7
+        && request.resource.data.rideRole in ['passenger', 'driver']
+        && request.resource.data.active is bool
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'departure', 'destination', 'departureTime', 'travelDays',
+          'rideRole', 'active', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    match /conversations/{conversationId} {
+      allow get, list: if signedIn()
+        && request.auth.uid in resource.data.participantIds;
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(
+            /databases/$(database)/documents/conversations/$(conversationId)
+          ).data.participantIds;
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /users/{uid}/notifications/{notificationId} {
+      allow read: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.userId == uid
+        && request.resource.data.readAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'readAt', 'updatedAt'
+        ]);
+      allow create, delete: if false;
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'rideId', 'driverId', 'passengerId', 'seats', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'rideId', 'driverId', 'passengerId', 'seats', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && bookingId == request.resource.data.rideId + '_' + request.auth.uid
+        && request.resource.data.passengerId == request.auth.uid
+        && request.resource.data.seats == 1
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && bookingRideIsValid();
+      allow get: if signedIn()
+        && (
+          bookingId.matches('.*_' + request.auth.uid)
+          || resource.data.driverId == request.auth.uid
+        );
+      allow list: if signedIn()
+        && (
+          resource.data.passengerId == request.auth.uid
+          || resource.data.driverId == request.auth.uid
+        );
+      allow update, delete: if false;
     }
 
     match /{document=**} {

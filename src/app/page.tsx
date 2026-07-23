@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock3,
   Coins,
+  Download,
   Leaf,
   MapPin,
   Menu,
@@ -89,6 +90,14 @@ export default function HomePage() {
               </Link>
               <a className="button button-ghost-light button-large" href="#fonctionnement">
                 Découvrir Covya
+              </a>
+              <a
+                className="button button-light button-large"
+                href="https://drive.google.com/file/d/1JUAjjZWhC5mFyLPIJa-pHy1Qt1LxoWwH/view?usp=sharing"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Télécharger l&apos;APK <Download size={18} />
               </a>
             </div>
             <div className="hero-trust">
