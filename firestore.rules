@@ -100,6 +100,15 @@ service cloud.firestore {
         ]);
     }
 
+    function isCompanyManager(companyId) {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)
+        ).data.role in ['company_admin', 'manager'];
+    }
     match /users/{uid} {
       allow create: if isSelf(uid)
         && (legacyUserDocumentIsSafe() || employeeUserDocumentIsSafe());
@@ -111,7 +120,7 @@ service cloud.firestore {
 
     match /rides/{rideId} {
       allow read: if signedIn();
-      allow create: if signedIn()
+      allow create: if false
         && request.resource.data.keys().hasOnly([
           'driverId', 'driverName', 'origin', 'destination', 'departureAt',
           'seats', 'price', 'currency', 'status', 'createdAt', 'updatedAt'
@@ -136,7 +145,7 @@ service cloud.firestore {
         && request.resource.data.currency == 'MAD'
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
-      allow update: if signedIn()
+      allow update: if false
         && resource.data.driverId == request.auth.uid
         && request.resource.data.driverId == resource.data.driverId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -246,7 +255,7 @@ service cloud.firestore {
     }
 
     match /bookings/{bookingId} {
-      allow create: if signedIn()
+      allow create: if false
         && request.resource.data.keys().hasOnly([
           'rideId', 'driverId', 'passengerId', 'seats', 'status',
           'createdAt', 'updatedAt'
@@ -275,6 +284,59 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /ride_series/{seriesId} {
+      allow read: if signedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /trip_locations/{bookingId}/participants/{uid} {
+      allow read: if signedIn()
+        && request.auth.uid in resource.data.participantIds
+        && resource.data.expiresAt > request.time;
+      allow write: if false;
+    }
+
+    match /users/{uid}/devices/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow read: if signedIn()
+        && (
+          resource.data.passengerId == request.auth.uid
+          || resource.data.driverId == request.auth.uid
+          || (
+            resource.data.companyId is string
+            && isCompanyManager(resource.data.companyId)
+          )
+          || request.auth.token.platformAdmin == true
+        );
+      allow write: if false;
+    }
+
+    match /companies/{companyId}/budgets/{budgetId} {
+      allow read: if isCompanyManager(companyId)
+        || request.auth.token.platformAdmin == true;
+      allow write: if false;
+    }
+
+    match /ratings/{ratingId} {
+      allow read: if signedIn()
+        && (
+          resource.data.authorId == request.auth.uid
+          || resource.data.subjectId == request.auth.uid
+        );
+      allow write: if false;
+    }
+
+    match /safety_reports/{reportId} {
+      allow read: if signedIn()
+        && (
+          resource.data.reporterId == request.auth.uid
+          || request.auth.token.platformAdmin == true
+        );
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

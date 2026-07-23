@@ -162,19 +162,12 @@ test('an employee can create their own ride template only', async () => {
   );
 });
 
-test('a passenger can request a real ride but cannot confirm it', async () => {
+test('rides and bookings are server-owned while participants can read theirs', async () => {
   const driverId = 'driver-1';
   const passengerId = 'passenger-1';
-  const driverDb = testEnv
-    .authenticatedContext(driverId, { email: 'driver@example.com' })
-    .firestore();
-  const passengerDb = testEnv
-    .authenticatedContext(passengerId, { email: 'passenger@example.com' })
-    .firestore();
-  const ride = doc(driverDb, 'rides', 'ride-1');
-
-  await assertSucceeds(
-    setDoc(ride, {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    await setDoc(doc(adminDb, 'rides', 'ride-1'), {
       driverId,
       driverName: 'Conducteur Test',
       origin: 'Paris',
@@ -186,46 +179,44 @@ test('a passenger can request a real ride but cannot confirm it', async () => {
       status: 'published',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    }),
-  );
-
-  const booking = doc(
-    passengerDb,
-    'bookings',
-    'ride-1_' + passengerId,
-  );
-  await assertSucceeds(
-    setDoc(booking, {
+    });
+    await setDoc(doc(adminDb, 'bookings', 'ride-1_' + passengerId), {
       rideId: 'ride-1',
       driverId,
       passengerId,
       seats: 1,
       status: 'pending',
+      priceSnapshot: { amount: 20, currency: 'MAD' },
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    }),
-  );
+    });
+  });
+
+  const driverDb = testEnv
+    .authenticatedContext(driverId, { email: 'driver@example.com' })
+    .firestore();
+  const passengerDb = testEnv
+    .authenticatedContext(passengerId, { email: 'passenger@example.com' })
+    .firestore();
+
+  await assertFails(setDoc(doc(driverDb, 'rides', 'client-ride'), {
+    driverId,
+    status: 'published',
+  }));
+  await assertFails(setDoc(doc(passengerDb, 'bookings', 'client-booking'), {
+    rideId: 'ride-1',
+    driverId,
+    passengerId,
+    status: 'pending',
+  }));
+
+  const booking = doc(passengerDb, 'bookings', 'ride-1_' + passengerId);
   await assertSucceeds(getDoc(booking));
   await assertSucceeds(
-    getDocs(
-      query(
-        collection(passengerDb, 'bookings'),
-        where('passengerId', '==', passengerId),
-      ),
-    ),
+    getDocs(query(collection(passengerDb, 'bookings'), where('passengerId', '==', passengerId))),
   );
-  await assertFails(
-    setDoc(
-      booking,
-      {
-        status: 'confirmed',
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    ),
-  );
+  await assertFails(setDoc(booking, { status: 'confirmed' }, { merge: true }));
 });
-
 test('a passenger cannot request a missing or spoofed ride', async () => {
   const passengerId = 'passenger-1';
   const db = testEnv
@@ -396,4 +387,51 @@ test('the existing web user schema remains accepted', async () => {
       updatedAt: serverTimestamp(),
     }),
   );
+});
+test('temporary locations are visible only to participants before expiry', async () => {
+  const future = new Date(Date.now() + 600000);
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'trip_locations', 'booking-map', 'participants', 'driver-map'), {
+      bookingId: 'booking-map',
+      userId: 'driver-map',
+      participantIds: ['driver-map', 'passenger-map'],
+      latitude: 33.57,
+      longitude: -7.58,
+      updatedAt: serverTimestamp(),
+      expiresAt: future,
+    });
+  });
+  const driverDb = testEnv.authenticatedContext('driver-map').firestore();
+  const passengerDb = testEnv.authenticatedContext('passenger-map').firestore();
+  const outsiderDb = testEnv.authenticatedContext('outsider-map').firestore();
+  const locationPath = ['trip_locations', 'booking-map', 'participants', 'driver-map'];
+  await assertSucceeds(getDoc(doc(driverDb, ...locationPath)));
+  await assertSucceeds(getDoc(doc(passengerDb, ...locationPath)));
+  await assertFails(getDoc(doc(outsiderDb, ...locationPath)));
+  await assertFails(setDoc(doc(driverDb, ...locationPath), { latitude: 0 }, { merge: true }));
+});
+
+test('payment and report records are readable only by authorized users', async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const adminDb = context.firestore();
+    await setDoc(doc(adminDb, 'payments', 'payment-1'), {
+      passengerId: 'passenger-pay',
+      driverId: 'driver-pay',
+      companyId: null,
+      status: 'succeeded',
+    });
+    await setDoc(doc(adminDb, 'safety_reports', 'report-1'), {
+      reporterId: 'passenger-pay',
+      status: 'open',
+    });
+  });
+  const passengerDb = testEnv.authenticatedContext('passenger-pay').firestore();
+  const driverDb = testEnv.authenticatedContext('driver-pay').firestore();
+  const outsiderDb = testEnv.authenticatedContext('outsider-pay').firestore();
+  await assertSucceeds(getDoc(doc(passengerDb, 'payments', 'payment-1')));
+  await assertSucceeds(getDoc(doc(driverDb, 'payments', 'payment-1')));
+  await assertFails(getDoc(doc(outsiderDb, 'payments', 'payment-1')));
+  await assertSucceeds(getDoc(doc(passengerDb, 'safety_reports', 'report-1')));
+  await assertFails(getDoc(doc(driverDb, 'safety_reports', 'report-1')));
+  await assertFails(setDoc(doc(passengerDb, 'payments', 'client-payment'), { status: 'succeeded' }));
 });
